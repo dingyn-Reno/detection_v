@@ -1,0 +1,10 @@
+
+torchvision
+transformers==4.32.1
+cython
+opencv-python
+scipy
+einops
+lvis
+fairscale
+
