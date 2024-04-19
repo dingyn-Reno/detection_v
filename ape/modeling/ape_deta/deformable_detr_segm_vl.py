@@ -1,4 +1,3 @@
-
 import copy
 import math
 import os
@@ -25,6 +24,8 @@ from detrex.layers import MLP, box_cxcywh_to_xyxy, box_xyxy_to_cxcywh
 from detrex.utils import inverse_sigmoid
 from torchvision.ops.boxes import batched_nms
 from clip import clip
+
+from ape.data.detection_utils import get_fed_loss_cls_weights
 
 from .deformable_detr import DeformableDETR
 from .fast_rcnn import fast_rcnn_inference
@@ -418,6 +419,7 @@ class DeformableDETRSegmVL(DeformableDETR):
         prompts_path=None,
         prompts_update_rate=1.0,
         vision_prompts_on=False,
+        vl_mode='adapter',
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -427,7 +429,7 @@ class DeformableDETRSegmVL(DeformableDETR):
         self.panoptic_on = panoptic_on
         self.gcp=gcp
         self.cafo=cafo
-
+        self.vl_mode=vl_mode
         self.mode=mode
         self.prompts_mode=prompts_mode
         self.prompts_path=prompts_path
@@ -992,8 +994,53 @@ class DeformableDETRSegmVL(DeformableDETR):
                     features_l = features_l.unsqueeze(0).repeat(len(batched_inputs), 1, 1)
                 else:
                     features_l = features_l.unsqueeze(1)
-        if self.vision_prompts_on:
+        if self.vision_prompts_on and self.vl_mode=='adapter':
             features_l=features_l+features_v
+        elif self.vision_prompts_on and self.vl_mode=='ensemble':
+            # pdb.set_trace()
+            outputs_classes_v = []
+            outputs_coords_v = []
+            outputs_masks_v = []
+            for lvl in range(inter_states.shape[0]):
+                # pdb.set_trace()
+                if lvl == 0:
+                    reference = init_reference2
+                else:
+                    reference = inter_references2[lvl - 1]
+                reference = inverse_sigmoid(reference)
+                if prompt == "name":
+                    outputs_class_v = self.class_embed[lvl](inter_states2[lvl], features_v)
+                elif prompt == "phrase" or prompt == "expression":
+                    outputs_class_v = self.class_embed[lvl](inter_states2[lvl], features_v)
+                else:
+                    outputs_class_v = self.class_embed[lvl](inter_states2[lvl])
+                b,bbox,c=outputs_class_v.shape
+                if self.cafo["enabled"]==True:
+                    cache_det_logits=cache_logits.unsqueeze(1).repeat(1,bbox,1)
+                    outputs_class_v=outputs_class_v+cache_det_logits
+                tmp = self.bbox_embed[lvl](inter_states2[lvl])
+                if reference.shape[-1] == 4:
+                    tmp += reference
+                else:
+                    assert reference.shape[-1] == 2
+                    tmp[..., :2] += reference
+                outputs_coord_v = tmp.sigmoid()
+                outputs_classes_v.append(outputs_class_v)
+                outputs_coords_v.append(outputs_coord_v)
+
+                if self.aux_mask:
+                    mask_embeds = self.mask_embed[lvl](inter_states2[lvl])
+                else:
+                    mask_embeds = self.mask_embed(inter_states2[lvl])
+                outputs_mask_v = torch.einsum("bqc,bchw->bqhw", mask_embeds, mask_features)
+                outputs_masks_v.append(outputs_mask_v)
+            
+            outputs_class_v = torch.stack(outputs_classes_v)
+            outputs_coord_v = torch.stack(outputs_coords_v)
+            # pdb.set_trace()
+            outputs_mask_v = outputs_masks_v
+            outputs_mask_v[-1] += 0.0 * sum(outputs_mask_v)
+
         outputs_classes = []
         outputs_coords = []
         outputs_masks = []
@@ -1036,10 +1083,17 @@ class DeformableDETRSegmVL(DeformableDETR):
         
         outputs_class = torch.stack(outputs_classes)
         outputs_coord = torch.stack(outputs_coords)
-
+        # pdb.set_trace()
         outputs_mask = outputs_masks
         outputs_mask[-1] += 0.0 * sum(outputs_mask)
 
+        if self.vision_prompts_on and self.vl_mode=='ensemble':
+            # pdb.set_trace()
+            outputs_class=torch.cat([outputs_class,outputs_class_v],dim=2)
+            outputs_coord=torch.cat([outputs_coord,outputs_coord_v],dim=2)
+            for m_idx in range(0,len(outputs_mask)):
+                outputs_mask[m_idx]=torch.cat([outputs_mask[m_idx],outputs_masks_v[m_idx]],dim=1)
+        
         output = {
             "pred_logits": outputs_class[-1],
             "pred_boxes": outputs_coord[-1],
@@ -1794,4 +1848,3 @@ def get_stuff_score(box_cls, metadata, dataset_entity):
         semantic_box_cls = box_cls.clone()
 
     return semantic_box_cls
-
