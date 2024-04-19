@@ -15,25 +15,30 @@ from detectron2.structures import BitMasks, Boxes, ImageList, Instances
 from detrex.layers import MLP, box_cxcywh_to_xyxy, box_xyxy_to_cxcywh
 from detrex.utils import inverse_sigmoid
 from torchvision.ops.boxes import batched_nms
-
+import pdb
 
 class SomeThing(nn.Module):
     def __init__(
         self,
         model_vision,
         model_language,
+        debug_model=False,
+        set_language=True,
         **kwargs,
     ):
         super().__init__(**kwargs)
 
         self.model_vision = model_vision
         self.model_language = model_language
-
-        self.model_vision.set_model_language(self.model_language)
+        self.debug_model=debug_model
+        if set_language:
+            self.model_vision.set_model_language(self.model_language)
         del self.model_language
 
-    def forward(self, batched_inputs, do_postprocess=True):
-        losses = self.model_vision(batched_inputs, do_postprocess=do_postprocess)
+    def forward(self, batched_inputs, do_postprocess=True,support_dict=None):
+        if self.debug_model:
+            pdb.set_trace()
+        losses = self.model_vision(batched_inputs, do_postprocess=do_postprocess,support_dict=support_dict)
         return losses
 
     def set_eval_dataset(self, dataset_name):

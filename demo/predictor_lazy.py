@@ -15,7 +15,8 @@ from ape.engine.defaults import DefaultPredictor
 from detectron2.data import MetadataCatalog
 from detectron2.utils.video_visualizer import VideoVisualizer
 from detectron2.utils.visualizer import ColorMode, Visualizer
-
+from detectron2.config import instantiate
+import pdb
 
 def filter_instances(instances, metadata):
     # return instances
@@ -135,17 +136,17 @@ class VisualizationDemo(object):
                 Useful since the visualization logic can be slow.
         """
         self.metadata = MetadataCatalog.get(
-            "__unused_" + "_".join([d for d in cfg.dataloader.train.dataset.names])
+            "__unused_" + "_".join([d for d in cfg.dataloader.train[0].dataset.names])
         )
         self.metadata.thing_classes = [
             c
-            for d in cfg.dataloader.train.dataset.names
+            for d in cfg.dataloader.train[0].dataset.names
             for c in MetadataCatalog.get(d).get("thing_classes", default=[])
             + MetadataCatalog.get(d).get("stuff_classes", default=["thing"])[1:]
         ]
         self.metadata.stuff_classes = [
             c
-            for d in cfg.dataloader.train.dataset.names
+            for d in cfg.dataloader.train[0].dataset.names
             for c in MetadataCatalog.get(d).get("thing_classes", default=[])
             + MetadataCatalog.get(d).get("stuff_classes", default=["thing"])[1:]
         ]
@@ -168,14 +169,13 @@ class VisualizationDemo(object):
 
         self.cpu_device = torch.device("cpu")
         self.instance_mode = instance_mode
-
+        self.model=instantiate(cfg.model)
         self.parallel = parallel
         if parallel:
             num_gpu = torch.cuda.device_count()
             self.predictor = AsyncPredictor(cfg, num_gpus=num_gpu)
         else:
-            self.predictor = DefaultPredictor(cfg)
-
+            self.predictor = DefaultPredictor(cfg,model=self.model)
         print(args)
 
     def run_on_image(
@@ -186,6 +186,7 @@ class VisualizationDemo(object):
         with_box=True,
         with_mask=True,
         with_sseg=True,
+        support_dict=None
     ):
         """
         Args:
@@ -204,9 +205,9 @@ class VisualizationDemo(object):
             metadata.stuff_classes = text_list
         else:
             metadata = self.metadata
-
+        # pdb.set_trace()
         vis_output = None
-        predictions = self.predictor(image, text_prompt, mask_prompt)
+        predictions = self.predictor(image, text_prompt, mask_prompt, support_dict)
 
         if "instances" in predictions:
             predictions["instances"] = filter_instances(
