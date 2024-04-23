@@ -20,7 +20,7 @@ from contextlib import nullcontext
 
 import torch
 from torch.nn.parallel import DataParallel, DistributedDataParallel
-
+import pdb
 import ape
 from ape.checkpoint import DetectionCheckpointer
 from ape.engine import SimpleTrainer
@@ -41,6 +41,8 @@ from detectron2.utils.file_io import PathManager
 from detectron2.utils.logger import setup_logger
 from detrex.modeling import ema
 from detrex.utils import WandbWriter
+
+import pdb
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
 
@@ -106,6 +108,7 @@ class Trainer(SimpleTrainer):
         self.iter_loop = iter_loop
         self.dataset_ratio = dataset_ratio
         self.save_memory = save_memory
+        
 
     def run_step(self):
         if self.iter_size > 1:
@@ -151,7 +154,7 @@ class Trainer(SimpleTrainer):
         else:
             self._write_metrics_common(dataset_image_counts)
             self._write_metrics_common(dataset_object_counts)
-
+        self.model._set_static_graph()
         """
         If you want to do something with the losses, you can wrap the model.
         """
@@ -170,14 +173,14 @@ class Trainer(SimpleTrainer):
         self.optimizer.zero_grad()
 
         if self.amp:
-            self.grad_scaler.scale(losses).backward()
+            self.grad_scaler.scale(losses).backward(retain_graph=True)
             if self.clip_grad_params is not None:
                 self.grad_scaler.unscale_(self.optimizer)
                 self.clip_grads(self.model.parameters())
             self.grad_scaler.step(self.optimizer)
             self.grad_scaler.update()
         else:
-            losses.backward()
+            losses.backward(retain_graph=True)
             if self.clip_grad_params is not None:
                 self.clip_grads(self.model.parameters())
             self.optimizer.step()
@@ -259,7 +262,7 @@ class Trainer(SimpleTrainer):
             losses = losses / self.iter_size
 
         if self.amp:
-            self.grad_scaler.scale(losses).backward()
+            self.grad_scaler.scale(losses).backward(retain_graph=True)
             if (self.iter + 1) % self.iter_size == 0:
                 if self.clip_grad_params is not None:
                     self.grad_scaler.unscale_(self.optimizer)
@@ -268,7 +271,7 @@ class Trainer(SimpleTrainer):
                 self.grad_scaler.update()
                 self.optimizer.zero_grad()
         else:
-            losses.backward()
+            losses.backward(retain_graph=True)
             if (self.iter + 1) % self.iter_size == 0:
                 if self.clip_grad_params is not None:
                     self.clip_grads(self.model.parameters())
@@ -353,9 +356,9 @@ class Trainer(SimpleTrainer):
                 losses = losses / self.iter_size
 
                 if self.amp:
-                    self.grad_scaler.scale(losses).backward()
+                    self.grad_scaler.scale(losses).backward(retain_graph=True)
                 else:
-                    losses.backward()
+                    losses.backward(retain_graph=True)
 
             if self.async_write_metrics:
                 self.concurrent_executor.submit(
@@ -417,8 +420,9 @@ class Trainer(SimpleTrainer):
             self._data_loader_iter_obj = iter(self.data_loader)
         return self._data_loader_iter_obj
 
+last_best=0.0
 
-def do_test(cfg, model, eval_only=False):
+def do_test(cfg, model, eval_only=False,checkpointer=None):
     logger = logging.getLogger("ape")
     if "evaluator" in cfg.dataloader:
         if isinstance(model, DistributedDataParallel):
@@ -447,6 +451,9 @@ def do_test(cfg, model, eval_only=False):
         )
         print_csv_format(ret)
         ret = {f"{k}_{cfg.dataloader.test.dataset.names}": v for k, v in ret.items()}
+        ap50_result=ret[f'{k}_{cfg.dataloader.test.dataset.names}']['AP50']
+                
+
     else:
         ret = {}
 
@@ -528,7 +535,9 @@ def do_train(args, cfg):
                 checkpointer (dict)
                 ddp (dict)
     """
+    print(cfg.model)
     model = instantiate(cfg.model)
+    
     logger = logging.getLogger("ape")
     logger.info("Model:\n{}".format(model))
     model.to(cfg.train.device)
@@ -540,7 +549,9 @@ def do_train(args, cfg):
         wait = comm.get_local_rank() % cfg.dataloader.wait_group * cfg.dataloader.wait_time
         logger.info("rank {} sleep {}".format(comm.get_local_rank(), wait))
         time.sleep(wait)
+    # pdb.set_trace()
     if isinstance(cfg.dataloader.train, abc.MutableSequence):
+        
         train_loader = [instantiate(x) for x in cfg.dataloader.train]
     else:
         train_loader = instantiate(cfg.dataloader.train)
@@ -559,6 +570,7 @@ def do_train(args, cfg):
         iter_loop=cfg.train.iter_loop if "iter_loop" in cfg.train else True,
         dataset_ratio=cfg.train.dataset_ratio if "dataset_ratio" in cfg.train else None,
     )
+    
 
     checkpointer = DetectionCheckpointer(
         model,
@@ -587,7 +599,7 @@ def do_train(args, cfg):
             hooks.PeriodicCheckpointer(checkpointer, **cfg.train.checkpointer)
             if comm.is_main_process()
             else None,
-            hooks.EvalHook(cfg.train.eval_period, lambda: do_test(cfg, model)),
+            hooks.EvalHook(cfg.train.eval_period, lambda: do_test(cfg, model,checkpointer),checkpointer=checkpointer),
             hooks.PeriodicWriter(
                 writers,
                 period=cfg.train.log_period,
@@ -629,7 +641,7 @@ def main(args):
     setup_logger(cfg.train.output_dir, distributed_rank=comm.get_rank(), name="timm")
 
     if cfg.train.fast_dev_run.enabled:
-        cfg.train.max_iter = 20
+        cfg.train.max_iter = 40
         cfg.train.eval_period = 10
         cfg.train.log_period = 1
 
