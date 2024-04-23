@@ -1,4 +1,3 @@
-```python
 import torch.nn as nn
 
 from detectron2.config import LazyCall as L
@@ -217,6 +216,10 @@ model.model_vision.backbone.out_channels = 256
 model.model_vision.prompts_update_rate = 0.5
 model.model_vision.vision_prompts_on = True
 
+model.model_vision.vl_mode='adapter' 
+
+# model.model_vision.vl_mode='ensemble'
+
 model.model_vision.update(
     _target_=DeformableDETRSegmVL,
 )
@@ -292,8 +295,8 @@ lr_multiplier = L(WarmupParamScheduler)(
 for i in range(len(dataloader.train)):
     dataloader.train[i].mapper.max_num_phrase = 128
     dataloader.train[i].mapper.nms_thresh_phrase = 0.6
-    dataloader.train[i].total_batch_size = 1
-    dataloader.train[i].total_batch_size_list = [1]
+    dataloader.train[i].total_batch_size = 4
+    dataloader.train[i].total_batch_size_list = [4]
     dataloader.train[i].num_workers = 2
 
 train.iter_size = 1
@@ -335,4 +338,3 @@ model.model_vision.support_words={
             "support_mode": 'adapt',
             'weight': 0.5
 }
-```
