@@ -3,12 +3,14 @@ import math
 import os
 import time
 from typing import Dict, List, Optional, Tuple
+from PIL import Image
 import pickle
 import cv2
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchvision import transforms
 import pdb
 import fvcore.nn.weight_init as weight_init
 from ape.modeling.text import utils as text_utils
@@ -24,7 +26,7 @@ from detrex.layers import MLP, box_cxcywh_to_xyxy, box_xyxy_to_cxcywh
 from detrex.utils import inverse_sigmoid
 from torchvision.ops.boxes import batched_nms
 from clip import clip
-
+import re
 from ape.data.detection_utils import get_fed_loss_cls_weights
 
 from .deformable_detr import DeformableDETR
@@ -435,6 +437,7 @@ class DeformableDETRSegmVL(DeformableDETR):
         self.prompts_path=prompts_path
         self.prompts_update_rate=prompts_update_rate
         self.vision_prompts_on=vision_prompts_on
+        self.update_vision_prompts_flags=1
         if vision_prompts_on:
             self.prompts_backbone, self.preprocess = clip.load("ViT-B/32", device=device)
         
@@ -443,7 +446,7 @@ class DeformableDETRSegmVL(DeformableDETR):
                 p.requires_grad = False
             self.cls_nums=cls_nums
             self.vision_prompts=nn.Parameter(torch.randn((1,self.cls_nums,512))).to(device)
-            self.learnable_prompts=nn.Parameter(torch.randn((1,self.cls_nums,512)),requires_grad=True).to(device)
+            # self.learnable_prompts=nn.Parameter(torch.randn((1,self.cls_nums,512)),requires_grad=True).to(device)
             self.prompt_liner=nn.Linear(512,1024)
             for k,v in self.named_parameters():
                 print('{}: {}'.format(k, v.requires_grad))
@@ -569,14 +572,20 @@ class DeformableDETRSegmVL(DeformableDETR):
             return False
     def update_vision_prompts(self,batched_inputs,device='cuda'):
         if self.mode=='infer' and self.prompts_mode=='mini' and self.prompts_path!=None:
-            image = Image.open(self.prompts_path).convert("RGB")
-            data=np.array(image)
-            data=torch.from_numpy(data)
-            # pdb.set_trace()
-            self.prompts_backbone.eval()    
-            roi=self.preprocess(data).to(device).unsqueeze(0)
-            roi_features = self.prompts_backbone.encode_image(roi)
-            self.vision_prompts[0,0]=roi_features[0]
+            prompt_names = os.listdir(self.prompts_path)
+            pattern = re.compile(r"tensor\((\d+)\)\.png")
+            for name in prompt_names:
+                category = int(pattern.search(name).group(1))
+                image = Image.open(os.path.join(self.prompts_path, name)).convert("RGB")
+                image = np.array(image)[:, :, ::-1].copy()              
+                data=torch.from_numpy(image)
+                # pdb.set_trace()
+                self.prompts_backbone.eval()    
+                roi=self.preprocess(data).to(device).unsqueeze(0)
+                roi_features = self.prompts_backbone.encode_image(roi)
+                self.vision_prompts[0,category]=roi_features[0]
+            return
+        if self.mode=='infer':
             return
         # pdb.set_trace()
         if 'instances' not in batched_inputs[0].keys():
@@ -633,10 +642,17 @@ class DeformableDETRSegmVL(DeformableDETR):
                 dataset_id = 0
         else:
             dataset_id = self.eval_dataset_id
+        
+
         if self.vision_prompts_on:
-            self.update_vision_prompts(batched_inputs)
+            if self.mode == 'infer' and self.update_vision_prompts_flags:
+                self.update_vision_prompts(batched_inputs)
+                self.update_vision_prompts_flags=0
+                print("visual pormpt loaded")
+            else:
+                self.update_vision_prompts(batched_inputs)
                
-            vision_prompts=self.vision_prompts+self.learnable_prompts
+            vision_prompts=self.vision_prompts
             vision_prompts=self.prompt_liner(vision_prompts) #1,cls,1024
             features_v=vision_prompts
             features_v_fusion=torch.mean(features_v,dim=1,keepdim=True)
@@ -1001,7 +1017,7 @@ class DeformableDETRSegmVL(DeformableDETR):
             outputs_classes_v = []
             outputs_coords_v = []
             outputs_masks_v = []
-            for lvl in range(inter_states.shape[0]):
+            for lvl in range(inter_states2.shape[0]):
                 # pdb.set_trace()
                 if lvl == 0:
                     reference = init_reference2

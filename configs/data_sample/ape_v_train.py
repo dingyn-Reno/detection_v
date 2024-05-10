@@ -310,3 +310,7 @@ train.ddp.find_unused_parameters = False
 
 train.amp.enabled = True
 train.ddp.fp16_compression = True
+
+# model.model_vision.prompts_path='/home/vis/dingyuning03/baidu/personal-code/dingyuning_APE/APE/output_imgs'
+# model.model_vision.mode='infer'
+# model.model_vision.cls_nums=58

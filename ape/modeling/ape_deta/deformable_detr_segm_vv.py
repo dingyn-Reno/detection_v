@@ -34,7 +34,7 @@ from .segmentation import MaskHeadSmallConv, MHAttentionMap
 import random
 from torch.nn.utils.rnn import pad_sequence
 import torchvision.utils as utils
-
+import re
 # 假设 tensor_image 是一个图片的tensor
 
 # 保存图像
@@ -140,8 +140,9 @@ class DeformableDETRSegmVV(DeformableDETR):
             p.requires_grad = False
         self.cls_nums=cls_nums
         self.vision_prompts=nn.Parameter(torch.randn((1,self.cls_nums,512))).to(device)
-        self.learnable_prompts=nn.Parameter(torch.randn((1,self.cls_nums,512)),requires_grad=True).to(device)
+        # self.learnable_prompts=nn.Parameter(torch.randn((1,self.cls_nums,512)),requires_grad=True).to(device)
         self.prompt_liner=nn.Linear(512,1024)
+        self.update_vision_prompts_flags = 1
         for k,v in self.named_parameters():
             print('{}: {}'.format(k, v.requires_grad))
     def redefine_preprocess(self,input_tensor):
@@ -166,16 +167,23 @@ class DeformableDETRSegmVV(DeformableDETR):
             return False
     def update_vision_prompts(self,batched_inputs,device='cuda'):
         if self.mode=='infer' and self.prompts_mode=='mini' and self.prompts_path!=None:
-            image = Image.open(self.prompts_path).convert("RGB")
-            data=np.array(image)
-            data=torch.from_numpy(data)
-            pdb.set_trace()
-            self.prompts_backbone.eval()    
-            roi=self.preprocess(data).to(device).unsqueeze(0)
-            roi_features = self.prompts_backbone.encode_image(roi)
-            self.vision_prompts[0,0]=roi_features[0]
+            prompt_names = os.listdir(self.prompts_path)
+            pattern = re.compile(r"tensor\((\d+)\)\.png")
+            for name in prompt_names:
+                category = int(pattern.search(name).group(1))
+
+                image = Image.open(os.path.join(self.prompts_path, name)).convert("RGB")
+                image = np.array(image)[:, :, ::-1].copy()             
+                data=torch.from_numpy(image)
+                
+                self.prompts_backbone.eval()    
+                roi=self.preprocess(data).to(device).unsqueeze(0)
+                roi_features = self.prompts_backbone.encode_image(roi)
+                self.vision_prompts[0,category]=roi_features[0]
             return
         # pdb.set_trace()
+        if self.mode=='infer':
+            return
         if 'instances' not in batched_inputs[0].keys():
             return
         instance=batched_inputs[0]['instances']
@@ -189,14 +197,18 @@ class DeformableDETRSegmVV(DeformableDETR):
                 img=batched_inputs[0]['image']
                 # pdb.set_trace()
                 x1,y1,x2,y2=int(bbox[0,0]),int(bbox[0,1]),int(bbox[0,2]),int(bbox[0,3])
+                if (y2-y1)*(x2-x1)<1000:
+                    continue
                 data=img[:,y1:y2,x1:x2]
                 data=data.permute(1,2,0)
                 cv2.imwrite('output_imgs/{}.png'.format(str(category)),data.cpu().numpy())
+
                 # pdb.set_trace()
                 self.prompts_backbone.eval()
                 roi=self.preprocess(data).to(device).unsqueeze(0)
                 roi_features = self.prompts_backbone.encode_image(roi)
                 self.vision_prompts[0,category]=roi_features[0]
+
             except:
                 continue
 
@@ -213,9 +225,15 @@ class DeformableDETRSegmVV(DeformableDETR):
             dataset_id = self.eval_dataset_id
 
         assert len(batched_inputs)==1
-        self.update_vision_prompts(batched_inputs)
+        if self.mode == 'infer' and self.update_vision_prompts_flags:
+            self.update_vision_prompts(batched_inputs)
+            self.update_vision_prompts_flags=0
+            print("visual pormpt loaded")
+        else:
+            # pdb.set_trace()
+            self.update_vision_prompts(batched_inputs)
 
-        vision_prompts=self.vision_prompts+self.learnable_prompts
+        vision_prompts=self.vision_prompts
         vision_prompts=self.prompt_liner(vision_prompts) #1,cls,1024
 
         start_time = time.perf_counter()
@@ -404,7 +422,7 @@ class DeformableDETRSegmVV(DeformableDETR):
 
                 if self.test_mask_on:
                     detector_mask_preds = [
-                        x[filter_ind] for x, filter_ind in zip(mask_pred, filter_inds)
+                        x[filter_ind.cpu()] for x, filter_ind in zip(mask_pred, filter_inds)
                     ]
 
                     for result, box_mask in zip(detector_results, detector_mask_preds):
