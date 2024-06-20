@@ -40,7 +40,7 @@ import re
 # 保存图像
 
 
-class DeformableDETRSegmTest(DeformableDETR):
+class DeformableDETRSegmmultiVV(DeformableDETR):
     def __init__(self, 
         instance_on: bool = True,
         semantic_on: bool = False,

@@ -15,7 +15,6 @@ from ape.modeling.ape_deta import (
     DeformableDetrTransformerVL,
     DeformableDETRSegmVV,
     DeformableDETRSegmmultiVV,
-    DeformableDETRSegmTest
 )
 from ape.modeling.text import EVA02CLIP
 
@@ -244,7 +243,7 @@ model.model_vision.name_prompt_fusion_type = "zero"
 
 # model.model_vision.num_classes = 1256
 # model.model_vision.num_classes = 365
-model.model_vision.cls_nums = 365
+model.model_vision.cls_nums = 80
 model.model_vision.select_box_nums_for_evaluation = 300
 
 criterion = model.model_vision.criterion[0]
@@ -253,7 +252,7 @@ del criterion.get_fed_loss_cls_weights
 del criterion.fed_loss_num_classes
 model.model_vision.criterion = [criterion for _ in range(1)]
 for criterion, num_classes in zip(
-    model.model_vision.criterion, [365] # [365]
+    model.model_vision.criterion, [80] # [365]
 ):
     criterion.num_classes = num_classes
 
@@ -267,7 +266,7 @@ model.model_vision.semantic_on = False
 model.model_vision.panoptic_on = False
 
 train.max_iter = 200000
-train.eval_period = 200000 # full=500,few=300
+train.eval_period = 10000 # full=500,few=300
 
 lr_multiplier = L(WarmupParamScheduler)(
     scheduler=L(MultiStepParamScheduler)(

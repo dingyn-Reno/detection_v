@@ -573,7 +573,7 @@ def do_train(args, cfg):
         dataset_ratio=cfg.train.dataset_ratio if "dataset_ratio" in cfg.train else None,
     )
     
-    cfg.train.wandb.enabled = False # wandb is enabled
+    cfg.train.wandb.enabled = True # wandb is enabled
     checkpointer = DetectionCheckpointer(
         model,
         cfg.train.output_dir,
