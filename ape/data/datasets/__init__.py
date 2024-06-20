@@ -17,3 +17,4 @@ from . import register_voc_seg as _register_voc_seg
 from . import sa1b as _sa1b
 from . import seginw_instance as _seginw_instance
 from . import visualgenome as _visualgenome
+from . import objects365v1 as _objects365v1

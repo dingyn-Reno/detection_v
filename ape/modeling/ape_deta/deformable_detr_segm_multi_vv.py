@@ -40,7 +40,7 @@ import re
 # 保存图像
 
 
-class DeformableDETRSegmVV(DeformableDETR):
+class DeformableDETRSegmTest(DeformableDETR):
     def __init__(self, 
         instance_on: bool = True,
         semantic_on: bool = False,
@@ -69,6 +69,7 @@ class DeformableDETRSegmVV(DeformableDETR):
         prompts_mode='mini',
         prompts_path=None,
         prompts_update_rate=1.0,
+        prompts_num=5,
     **kwargs):
         super().__init__(**kwargs)
         self.instance_on = instance_on
@@ -138,13 +139,10 @@ class DeformableDETRSegmVV(DeformableDETR):
         self.preprocess=self.redefine_preprocess
         for p in self.prompts_backbone.parameters():
             p.requires_grad = False
-        # clip的权重为float16先转为32才能进行梯度优化
-        # for p in self.prompts_backbone.parameters(): 
-        #     p.data = p.data.float() 
         
-
         self.cls_nums=cls_nums
-        self.vision_prompts=nn.Parameter(torch.randn((1,self.cls_nums,512))).to(device)
+        self.vision_prompts=nn.Parameter(torch.zeros((self.cls_nums, prompts_num, 512))).to(device) # cls*num*512
+         
         # self.learnable_prompts=nn.Parameter(torch.randn((1,self.cls_nums,512)),requires_grad=True).to(device)
         self.prompt_liner=nn.Linear(512,1024)
         self.update_vision_prompts_flags = 1
@@ -153,6 +151,11 @@ class DeformableDETRSegmVV(DeformableDETR):
 
         for k,v in self.named_parameters():
             print('{}: {}'.format(k, v.requires_grad))
+
+        self.cls_labels = torch.zeros(1, self.cls_nums, requires_grad=False).to(self.device)
+        self.fea_down = nn.Linear(65536, 1024)
+        self.is_cls = True if self.mode == 'train' else False
+
     def redefine_preprocess(self,input_tensor):
 
         input_tensor = input_tensor.permute(2, 0, 1) # Change image from HWC to CHW format
@@ -173,6 +176,16 @@ class DeformableDETRSegmVV(DeformableDETR):
             return True
         else:
             return False
+    def get_feature_similarity(self, vision_prompts, feature):
+        for prompt in vision_prompts:
+            if torch.all(prompt==0):
+                prompt = feature
+                return vision_prompts
+        
+        cosine_sim = [F.cosine_similarity(prompt, feature) for prompt in vision_prompts]
+        index = cosine_sim.index(min(cosine_sim))
+        vision_prompts[index] = (vision_prompts[index]+feature)/2
+        return vision_prompts
     def update_vision_prompts(self,batched_inputs,device='cuda'):
         if self.mode=='infer' and self.prompts_mode=='mini' and self.prompts_path!=None:
             prompt_names = os.listdir(self.prompts_path)
@@ -196,25 +209,17 @@ class DeformableDETRSegmVV(DeformableDETR):
             return
         instance=batched_inputs[0]['instances']
         
+        self.cls_labels = torch.zeros(1, self.cls_nums, requires_grad=False).to(self.device)
         for i in range(0,len(instance)):
             try:
                 category=instance[i].gt_classes[0]
-                if self.prompt_first_update[category] == 0:
-                    prompt_update_resolution = 2000
-                else:
-                    prompt_update_resolution = 1600
-                # 第一次选高质量prompts 为2000 而且不用考虑概率
-                if (self.generate_with_probability()==False) and (self.prompt_first_update[category] == 1):
-                    continue
+                self.cls_labels[0, category] = 1
                 bbox=instance[i].gt_boxes.tensor
-
                 img=batched_inputs[0]['image']
                 # pdb.set_trace()
                 x1,y1,x2,y2=int(bbox[0,0]),int(bbox[0,1]),int(bbox[0,2]),int(bbox[0,3])
-                if (y2-y1)*(x2-x1)<prompt_update_resolution:
+                if (y2-y1)*(x2-x1)<self.prompt_update_resolution:
                     continue
-                if self.prompt_first_update[category] == 0:
-                    self.prompt_first_update[category] = 1
                 data=img[:,y1:y2,x1:x2]
                 data=data.permute(1,2,0)
                 cv2.imwrite('output_imgs/{}.png'.format(str(category)),data.cpu().numpy())
@@ -223,11 +228,13 @@ class DeformableDETRSegmVV(DeformableDETR):
                 self.prompts_backbone.eval()
                 roi=self.preprocess(data).to(device).unsqueeze(0)
                 roi_features = self.prompts_backbone.encode_image(roi)
-                self.vision_prompts[0,category]=roi_features[0]
+
+                self.vision_prompts[category] = self.get_feature_similarity(self.vision_prompts[category], roi_features[0])
+                
                 #保存最高分辨率的prompts
                 if self.max_prompt_resolution[category]<(y2-y1)*(x2-x1):
                     self.max_prompt_resolution[category]=(y2-y1)*(x2-x1)
-                    cv2.imwrite('output_imgs_max/tensor({}).png'.format(str(category)),data.cpu().numpy())
+                    cv2.imwrite('output_imgs_max/{}.png'.format(str(category)),data.cpu().numpy())
             except:
                 continue
 
@@ -251,10 +258,8 @@ class DeformableDETRSegmVV(DeformableDETR):
         else:
             # pdb.set_trace()
             self.update_vision_prompts(batched_inputs)
-
-        vision_prompts=self.vision_prompts
+        vision_prompts=self.vision_prompts.mean(dim=1).unsqueeze(0)# cls* num * 512 -> 1* cls * 512
         vision_prompts=self.prompt_liner(vision_prompts) #1,cls,1024
-
         start_time = time.perf_counter()
         
         self.backbone_time = time.perf_counter() - start_time
@@ -269,6 +274,14 @@ class DeformableDETRSegmVV(DeformableDETR):
         start_time = time.perf_counter()
         # pdb.set_trace()
         features = self.backbone(images.tensor)  # output feature dict
+        
+        if self.is_cls:
+            fea_classification = features['p6'].reshape(1, -1)  # 最后一个特征图为1*256*16*16->1*65536
+            fea_classification = self.fea_down(fea_classification)
+            attention = (fea_classification @ vision_prompts.squeeze(0).T)/math.sqrt(fea_classification.shape[-1]) # 1*cls
+            output = F.sigmoid(attention)  # 归一化到0-1
+            cls_loss = F.mse_loss(output, self.cls_labels)
+
 
         if self.neck is not None:
             multi_level_feats = self.neck({f: features[f] for f in self.neck.in_features})
@@ -400,6 +413,8 @@ class DeformableDETRSegmVV(DeformableDETR):
             for k in loss_dict.keys():
                 if k in weight_dict:
                     loss_dict[k] *= weight_dict[k]
+            if self.is_cls:
+                loss_dict['cls_loss'] = cls_loss
             return loss_dict
         else:
 

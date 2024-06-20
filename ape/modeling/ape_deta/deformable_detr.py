@@ -85,16 +85,17 @@ class DeformableDETR(nn.Module):
         openset_classifier: str = "VisionLanguageAlign",
     ):
         super().__init__()
-        self.backbone = backbone
-        self.position_embedding = position_embedding
+        # 模型为 /home/dongbingcheng/detection_v/configs/COCO_InstanceSegmentation/ape_deta/models/ape_deta_r50.py
+        self.backbone = backbone # configs/common/backbone/vitl_eva02_clip.py
+        self.position_embedding = position_embedding #  /home/dongbingcheng/package/detrex/detrex/layers/position_embedding.py   PositionEmbeddingSine
 
-        self.neck = neck
+        self.neck = neck #    /home/dongbingcheng/package/detrex/detrex/modeling/neck/channel_mapper.py ChannelMapper
 
-        self.num_queries = num_queries
+        self.num_queries = num_queries # 900
         if not as_two_stage:
             self.query_embedding = nn.Embedding(num_queries, embed_dim * 2)
 
-        self.transformer = transformer
+        self.transformer = transformer  # ape/modeling/ape_deta/deformable_transformer_vl.py  DeformableDetrTransformerVL
 
         self.num_classes = num_classes
         if criterion[0].loss_class_type == "ce_loss":
