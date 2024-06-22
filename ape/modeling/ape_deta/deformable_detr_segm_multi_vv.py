@@ -134,14 +134,15 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
         self.name_prompt_fusion_type = name_prompt_fusion_type
         self.name_prompt_fusion_text = name_prompt_fusion_text
 
-        self.prompts_backbone, self.preprocess = clip.load("ViT-B/32", device=device)
+        self.prompts_backbone, self.preprocess = clip.load("ViT-B/32", device=device, jit=False)
         
         self.preprocess=self.redefine_preprocess
         for p in self.prompts_backbone.parameters():
             p.requires_grad = False
-        
+  
+
         self.cls_nums=cls_nums
-        self.vision_prompts=nn.Parameter(torch.zeros((self.cls_nums, prompts_num, 512))).to(device) # cls*num*512
+        self.vision_prompts=nn.Parameter(torch.zeros((self.cls_nums, prompts_num, 512)), requires_grad=False).to(device) # cls*num*512
          
         # self.learnable_prompts=nn.Parameter(torch.randn((1,self.cls_nums,512)),requires_grad=True).to(device)
         self.prompt_liner=nn.Linear(512,1024)
@@ -152,9 +153,10 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
         for k,v in self.named_parameters():
             print('{}: {}'.format(k, v.requires_grad))
 
-        self.cls_labels = torch.zeros(1, self.cls_nums, requires_grad=False).to(self.device)
-        self.fea_down = nn.Linear(65536, 1024)
         self.is_cls = True if self.mode == 'train' else False
+        if self.is_cls:
+            self.cls_labels = torch.zeros(1, self.cls_nums, requires_grad=False).to(self.device)
+            self.fea_down = nn.Linear(65536, 1024)
 
     def redefine_preprocess(self,input_tensor):
 
@@ -177,15 +179,17 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
         else:
             return False
     def get_feature_similarity(self, vision_prompts, feature):
-        for prompt in vision_prompts:
-            if torch.all(prompt==0):
-                prompt = feature
-                return vision_prompts
-        
-        cosine_sim = [F.cosine_similarity(prompt, feature) for prompt in vision_prompts]
-        index = cosine_sim.index(min(cosine_sim))
-        vision_prompts[index] = (vision_prompts[index]+feature)/2
-        return vision_prompts
+        with torch.no_grad():
+            for i, prompt in enumerate(vision_prompts):
+                if torch.all(prompt==0):
+                    vision_prompts[i] = feature
+                    return vision_prompts
+            
+            cosine_sim = F.cosine_similarity(vision_prompts, feature.unsqueeze(0), dim=1)
+            index = cosine_sim.argmin().item()
+            vision_prompts[index] = (vision_prompts[index] + feature) / 2
+            return vision_prompts
+    
     def update_vision_prompts(self,batched_inputs,device='cuda'):
         if self.mode=='infer' and self.prompts_mode=='mini' and self.prompts_path!=None:
             prompt_names = os.listdir(self.prompts_path)
@@ -213,12 +217,21 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
         for i in range(0,len(instance)):
             try:
                 category=instance[i].gt_classes[0]
+                if self.prompt_first_update[category] == 0:
+                    prompt_update_resolution = 2000
+                else:
+                    prompt_update_resolution = 1600
+                if (self.generate_with_probability()==False) and (self.prompt_first_update[category] == 1):
+                    continue
+                bbox=instance[i].gt_boxes.tensor
+
                 self.cls_labels[0, category] = 1
                 bbox=instance[i].gt_boxes.tensor
+
                 img=batched_inputs[0]['image']
                 # pdb.set_trace()
                 x1,y1,x2,y2=int(bbox[0,0]),int(bbox[0,1]),int(bbox[0,2]),int(bbox[0,3])
-                if (y2-y1)*(x2-x1)<self.prompt_update_resolution:
+                if (y2-y1)*(x2-x1)<prompt_update_resolution:
                     continue
                 data=img[:,y1:y2,x1:x2]
                 data=data.permute(1,2,0)
@@ -230,13 +243,13 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
                 roi_features = self.prompts_backbone.encode_image(roi)
 
                 self.vision_prompts[category] = self.get_feature_similarity(self.vision_prompts[category], roi_features[0])
-                
                 #保存最高分辨率的prompts
                 if self.max_prompt_resolution[category]<(y2-y1)*(x2-x1):
                     self.max_prompt_resolution[category]=(y2-y1)*(x2-x1)
                     cv2.imwrite('output_imgs_max/{}.png'.format(str(category)),data.cpu().numpy())
             except:
                 continue
+        torch.cuda.empty_cache()
 
     
     def forward(self,batched_inputs, do_postprocess=True,support_dict=None):
@@ -258,6 +271,7 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
         else:
             # pdb.set_trace()
             self.update_vision_prompts(batched_inputs)
+        
         vision_prompts=self.vision_prompts.mean(dim=1).unsqueeze(0)# cls* num * 512 -> 1* cls * 512
         vision_prompts=self.prompt_liner(vision_prompts) #1,cls,1024
         start_time = time.perf_counter()
@@ -474,7 +488,7 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
                     assert (
                         not torch.jit.is_scripting()
                     ), "Scripting is not supported for postprocess."
-                    detector_results = DeformableDETRSegmVV._postprocess_instance(
+                    detector_results = DeformableDETRSegmmultiVV._postprocess_instance(
                         detector_results, batched_inputs, images.image_sizes
                     )
                     for merged_result, detector_result in zip(merged_results, detector_results):
@@ -507,7 +521,7 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
                     assert (
                         not torch.jit.is_scripting()
                     ), "Scripting is not supported for postprocess."
-                    semantic_results = DeformableDETRSegmVL._postprocess_semantic(
+                    semantic_results = DeformableDETRSegmmultiVV._postprocess_semantic(
                         semantic_box_cls, semantic_mask_pred, batched_inputs, images
                     )
                     if (
@@ -544,7 +558,7 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
                                 x[filter_ind] for x, filter_ind in zip(box_cls, filter_inds)
                             ]
 
-                        panoptic_results = DeformableDETRSegmVL._postprocess_panoptic(
+                        panoptic_results = DeformableDETRSegmmultiVV._postprocess_panoptic(
                             panoptic_box_cls,
                             panoptic_mask_pred,
                             batched_inputs,

@@ -266,7 +266,7 @@ model.model_vision.semantic_on = False
 model.model_vision.panoptic_on = False
 
 train.max_iter = 200000
-train.eval_period = 10000 # full=500,few=300
+train.eval_period = 5000 # full=500,few=300
 
 lr_multiplier = L(WarmupParamScheduler)(
     scheduler=L(MultiStepParamScheduler)(
