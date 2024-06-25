@@ -174,18 +174,18 @@ class Trainer(SimpleTrainer):
         """
         self.optimizer.zero_grad()
 
-        if self.amp:
-            self.grad_scaler.scale(losses).backward(retain_graph=True)
-            if self.clip_grad_params is not None:
-                self.grad_scaler.unscale_(self.optimizer)
-                self.clip_grads(self.model.parameters())
-            self.grad_scaler.step(self.optimizer)
-            self.grad_scaler.update()
-        else:
-            losses.backward(retain_graph=True)
-            if self.clip_grad_params is not None:
-                self.clip_grads(self.model.parameters())
-            self.optimizer.step()
+        # if self.amp:
+        #     self.grad_scaler.scale(losses).backward(retain_graph=True)
+        #     if self.clip_grad_params is not None:
+        #         self.grad_scaler.unscale_(self.optimizer)
+        #         self.clip_grads(self.model.parameters())
+        #     self.grad_scaler.step(self.optimizer)
+        #     self.grad_scaler.update()
+        # else:
+        #     losses.backward(retain_graph=True)
+        #     if self.clip_grad_params is not None:
+        #         self.clip_grads(self.model.parameters())
+        #     self.optimizer.step()
 
         if self.async_write_metrics:
             self.concurrent_executor.submit(
@@ -263,22 +263,22 @@ class Trainer(SimpleTrainer):
         if self.iter_size > 1:
             losses = losses / self.iter_size
 
-        if self.amp:
-            self.grad_scaler.scale(losses).backward(retain_graph=True)
-            if (self.iter + 1) % self.iter_size == 0:
-                if self.clip_grad_params is not None:
-                    self.grad_scaler.unscale_(self.optimizer)
-                    self.clip_grads(self.model.parameters())
-                self.grad_scaler.step(self.optimizer)
-                self.grad_scaler.update()
-                self.optimizer.zero_grad()
-        else:
-            losses.backward(retain_graph=True)
-            if (self.iter + 1) % self.iter_size == 0:
-                if self.clip_grad_params is not None:
-                    self.clip_grads(self.model.parameters())
-                self.optimizer.step()
-                self.optimizer.zero_grad()
+        # if self.amp:
+        #     self.grad_scaler.scale(losses).backward(retain_graph=True)
+        #     if (self.iter + 1) % self.iter_size == 0:
+        #         if self.clip_grad_params is not None:
+        #             self.grad_scaler.unscale_(self.optimizer)
+        #             self.clip_grads(self.model.parameters())
+        #         self.grad_scaler.step(self.optimizer)
+        #         self.grad_scaler.update()
+        #         self.optimizer.zero_grad()
+        # else:
+        #     losses.backward(retain_graph=True)
+        #     if (self.iter + 1) % self.iter_size == 0:
+        #         if self.clip_grad_params is not None:
+        #             self.clip_grads(self.model.parameters())
+        #         self.optimizer.step()
+        #         self.optimizer.zero_grad()
 
         if self.async_write_metrics:
             self.concurrent_executor.submit(
@@ -357,10 +357,10 @@ class Trainer(SimpleTrainer):
 
                 losses = losses / self.iter_size
 
-                if self.amp:
-                    self.grad_scaler.scale(losses).backward(retain_graph=True)
-                else:
-                    losses.backward(retain_graph=True)
+                # if self.amp:
+                #     self.grad_scaler.scale(losses).backward(retain_graph=True)
+                # else:
+                #     losses.backward(retain_graph=True)
 
             if self.async_write_metrics:
                 self.concurrent_executor.submit(
@@ -374,16 +374,16 @@ class Trainer(SimpleTrainer):
                 del loss_dict
                 torch.cuda.empty_cache()
 
-        if self.amp:
-            if self.clip_grad_params is not None:
-                self.grad_scaler.unscale_(self.optimizer)
-                self.clip_grads(self.model.parameters())
-            self.grad_scaler.step(self.optimizer)
-            self.grad_scaler.update()
-        else:
-            if self.clip_grad_params is not None:
-                self.clip_grads(self.model.parameters())
-            self.optimizer.step()
+        # if self.amp:
+        #     if self.clip_grad_params is not None:
+        #         self.grad_scaler.unscale_(self.optimizer)
+        #         self.clip_grads(self.model.parameters())
+        #     self.grad_scaler.step(self.optimizer)
+        #     self.grad_scaler.update()
+        # else:
+        #     if self.clip_grad_params is not None:
+        #         self.clip_grads(self.model.parameters())
+        #     self.optimizer.step()
 
     def clip_grads(self, params):
         params = list(filter(lambda p: p.requires_grad and p.grad is not None, params))
@@ -666,7 +666,7 @@ def main(args):
 
 if __name__ == "__main__":
     args = default_argument_parser().parse_args()
-    args.config_file = 'configs/data_sample/ape_multi_v_train.py'
+    args.config_file = 'configs/data_sample/ape_multi_v_lvis.py'
     args.num_gpus = 2
     args.resume = False
     launch(

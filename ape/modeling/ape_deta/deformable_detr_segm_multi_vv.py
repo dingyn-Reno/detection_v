@@ -134,7 +134,7 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
         self.name_prompt_fusion_type = name_prompt_fusion_type
         self.name_prompt_fusion_text = name_prompt_fusion_text
 
-        self.prompts_backbone, self.preprocess = clip.load("ViT-B/32", device=device, jit=False)
+        self.prompts_backbone, self.preprocess = clip.load("ViT-B/32", device=device)
         
         self.preprocess=self.redefine_preprocess
         for p in self.prompts_backbone.parameters():
@@ -142,8 +142,9 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
   
 
         self.cls_nums=cls_nums
+        
         self.vision_prompts=nn.Parameter(torch.zeros((self.cls_nums, prompts_num, 512)), requires_grad=False).to(device) # cls*num*512
-         
+        # self.register_buffer("vision_prompts", self.vision_prompts)  # 还是想保存一下权重
         # self.learnable_prompts=nn.Parameter(torch.randn((1,self.cls_nums,512)),requires_grad=True).to(device)
         self.prompt_liner=nn.Linear(512,1024)
         self.update_vision_prompts_flags = 1
@@ -190,6 +191,15 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
             vision_prompts[index] = (vision_prompts[index] + feature) / 2
             return vision_prompts
     
+    def get_feature_FIFO(self, vision_prompts, feature):
+        with torch.no_grad():
+            for i, prompt in enumerate(vision_prompts):
+                if torch.all(prompt==0):
+                    vision_prompts[i] = feature
+                    return vision_prompts
+            vision_prompts = torch.cat((vision_prompts[1:], feature.unsqueeze(0)), dim=0)
+            return vision_prompts
+            
     def update_vision_prompts(self,batched_inputs,device='cuda'):
         if self.mode=='infer' and self.prompts_mode=='mini' and self.prompts_path!=None:
             prompt_names = os.listdir(self.prompts_path)
@@ -250,7 +260,7 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
             except:
                 continue
         torch.cuda.empty_cache()
-
+    
     
     def forward(self,batched_inputs, do_postprocess=True,support_dict=None):
         if self.training:

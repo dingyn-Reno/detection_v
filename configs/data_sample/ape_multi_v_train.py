@@ -155,7 +155,7 @@ dataloader.evaluators = [
 model.model_vision.backbone = backbone
 
 train.init_checkpoint = (
-    "models/model_final.pth"
+    "output/configs/data_sample/ape_multi_v_train_coco_5w/model_final.pth"
 )
 # train.init_checkpoint = (
 #     "/home/dongbingcheng/detection_v/output/configs/data_sample/ape_v_train/model_0134999.pth"
@@ -208,7 +208,7 @@ model.model_vision.embed_dim = 256
 model.model_vision.backbone.out_channels = 256
 
 model.model_vision.update(
-    _target_=DeformableDETRSegmmultiVV, # Todo
+    _target_=DeformableDETRSegmmultiVV, 
 )
 model.model_vision.transformer.update(
     _target_=DeformableDetrTransformerVL,
@@ -265,7 +265,7 @@ model.model_vision.instance_on = True
 model.model_vision.semantic_on = False
 model.model_vision.panoptic_on = False
 
-train.max_iter = 200000
+train.max_iter = 50000
 train.eval_period = 5000 # full=500,few=300
 
 lr_multiplier = L(WarmupParamScheduler)(
