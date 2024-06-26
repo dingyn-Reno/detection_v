@@ -84,6 +84,29 @@ def load_image(image_file, input_size=448, max_num=6):
     pixel_values = torch.stack(pixel_values)
     return pixel_values
 
+import json
+import os
+import pdb
+
+with open('/share_ssd/dongbingcheng/lvis_v1_val/configs/val/val/inference_lvis_v1_val/lvis_instances_results.json','rb') as f:
+    data=json.load(f)
+
+new_data=[]
+
+dir='/share_ssd/dongbingcheng/LVIS'
+
+with open('saved_anno.json','rb') as f:
+    data_origin=json.load(f)
+
+
+for i in range(0,len(data)):
+    category_id=data[i]['category_id']
+    image_id = data[i]['image_id']
+    bbox=data[i]['bbox']
+    bbox[2]=bbox[0]+bbox[2]
+    bbox[3]=bbox[1]+bbox[3]
+    image_path=data_origin
+
 
 path = "/share/dongbingcheng/InternVL"
 # If you have an 80G A100 GPU, you can put the entire model on a single GPU.
@@ -111,43 +134,6 @@ generation_config = dict(
 )
 
 # single-round single-image conversation
-question = "请详细描述图片" # Please describe the picture in detail
+question = "请判断图中绘制的框内是否含有{}".format('苹果') # Please describe the picture in detail
 response = model.chat(tokenizer, pixel_values, question, generation_config)
 print(question, response)
-
-# multi-round single-image conversation
-question = "请详细描述图片" # Please describe the picture in detail
-response, history = model.chat(tokenizer, pixel_values, question, generation_config, history=None, return_history=True)
-print(question, response)
-
-question = "请根据图片写一首诗" # Please write a poem according to the picture
-response, history = model.chat(tokenizer, pixel_values, question, generation_config, history=history, return_history=True)
-print(question, response)
-
-# multi-round multi-image conversation
-pixel_values1 = load_image('./1.png', max_num=6).to(torch.bfloat16).cuda()
-pixel_values2 = load_image('./1.png', max_num=6).to(torch.bfloat16).cuda()
-pixel_values = torch.cat((pixel_values1, pixel_values2), dim=0)
-
-question = "详细描述这两张图片" # Describe the two pictures in detail
-response, history = model.chat(tokenizer, pixel_values, question, generation_config, history=None, return_history=True)
-print(question, response)
-
-question = "这两张图片的相同点和区别分别是什么" # What are the similarities and differences between these two pictures
-response, history = model.chat(tokenizer, pixel_values, question, generation_config, history=history, return_history=True)
-print(question, response)
-
-# batch inference (single image per sample)
-pixel_values1 = load_image('./1.png', max_num=6).to(torch.bfloat16).cuda()
-pixel_values2 = load_image('./1.png', max_num=6).to(torch.bfloat16).cuda()
-image_counts = [pixel_values1.size(0), pixel_values2.size(0)]
-pixel_values = torch.cat((pixel_values1, pixel_values2), dim=0)
-
-questions = ["Describe the image in detail."] * len(image_counts)
-responses = model.batch_chat(tokenizer, pixel_values,
-                             image_counts=image_counts,
-                             questions=questions,
-                             generation_config=generation_config)
-for question, response in zip(questions, responses):
-    print(question)
-    print(response)

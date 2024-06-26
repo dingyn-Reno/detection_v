@@ -4,6 +4,7 @@ from .deformable_criterion import DeformableCriterion
 from .deformable_detr import DeformableDETR
 from .deformable_detr_segm import DeformableDETRSegm
 from .deformable_detr_segm_vl import DeformableDETRSegmVL
+from .deformable_detr_segm_vv import DeformableDETRSegmVV
 from .deformable_transformer import (
     DeformableDetrTransformer,
     DeformableDetrTransformerDecoder,
