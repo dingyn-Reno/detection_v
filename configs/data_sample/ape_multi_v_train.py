@@ -14,10 +14,11 @@ from ape.modeling.ape_deta import (
     DeformableDetrTransformerEncoderVL,
     DeformableDetrTransformerVL,
     DeformableDETRSegmVV,
+    DeformableDETRSegmmultiVV,
 )
 from ape.modeling.text import EVA02CLIP
 
-from ..common.backbone.vitl_eva02_clip import backbone 
+from ..common.backbone.vitl_eva02_clip import backbone
 
 from ..LVIS_InstanceSegmentation.ape_deta.ape_deta_vitl_eva02_lsj1024_cp_24ep import (
     model,
@@ -121,7 +122,7 @@ dataloader.train = [
         num_datasets=1,
     )
     for dataloader_id, use_rfs, use_cp, use_filter, dataset_name in [
-        [0, True, False, True, "objects365v1_train"], # chengguan_full_shot_train # objects365_train_fixname
+        [0, True, False, True, "coco_2017_train"], # chengguan_full_shot_train # objects365_train_fixname
     ]
 ]
 
@@ -130,7 +131,7 @@ dataloader.train = [
 
 dataloader.tests = [
     L(build_detection_test_loader)(
-        dataset=L(get_detection_dataset_dicts)(names="objects365v1_val", filter_empty=False),
+        dataset=L(get_detection_dataset_dicts)(names="coco_2017_val", filter_empty=False),
         mapper=L(DatasetMapper)(
             is_train=False,
             augmentations=[
@@ -144,7 +145,7 @@ dataloader.tests = [
 
 dataloader.evaluators = [
     L(COCOEvaluator)(
-        dataset_name="objects365v1_val", # chengguan_test # objects365_val_fixname
+        dataset_name="coco_2017_val", # chengguan_test # objects365_val_fixname
         tasks=("bbox",),
     ),
 ]
@@ -154,7 +155,7 @@ dataloader.evaluators = [
 model.model_vision.backbone = backbone
 
 train.init_checkpoint = (
-    "output/configs/data_sample/ape_v_train/model_0094999.pth"
+    "output/configs/data_sample/ape_multi_v_train_coco_5w/model_final.pth"
 )
 # train.init_checkpoint = (
 #     "/home/dongbingcheng/detection_v/output/configs/data_sample/ape_v_train/model_0134999.pth"
@@ -207,7 +208,7 @@ model.model_vision.embed_dim = 256
 model.model_vision.backbone.out_channels = 256
 
 model.model_vision.update(
-    _target_=DeformableDETRSegmVV,
+    _target_=DeformableDETRSegmmultiVV, 
 )
 model.model_vision.transformer.update(
     _target_=DeformableDetrTransformerVL,
@@ -242,7 +243,7 @@ model.model_vision.name_prompt_fusion_type = "zero"
 
 # model.model_vision.num_classes = 1256
 # model.model_vision.num_classes = 365
-model.model_vision.cls_nums = 365
+model.model_vision.cls_nums = 80
 model.model_vision.select_box_nums_for_evaluation = 300
 
 criterion = model.model_vision.criterion[0]
@@ -251,7 +252,7 @@ del criterion.get_fed_loss_cls_weights
 del criterion.fed_loss_num_classes
 model.model_vision.criterion = [criterion for _ in range(1)]
 for criterion, num_classes in zip(
-    model.model_vision.criterion, [365] # [365]
+    model.model_vision.criterion, [80] # [365]
 ):
     criterion.num_classes = num_classes
 
@@ -264,8 +265,8 @@ model.model_vision.instance_on = True
 model.model_vision.semantic_on = False
 model.model_vision.panoptic_on = False
 
-train.max_iter = 200000
-train.eval_period = 200000 # full=500,few=300
+train.max_iter = 50000
+train.eval_period = 5000 # full=500,few=300
 
 lr_multiplier = L(WarmupParamScheduler)(
     scheduler=L(MultiStepParamScheduler)(
@@ -293,7 +294,7 @@ model.model_vision.dataset_prompts = [
     "name",
 ]
 model.model_vision.dataset_names = [
-    "objects365v1_train",
+    "coco_2017_val",
 ]
 model.model_vision.dataset_metas = [xx for x in dataloader.train for xx in x.dataset.names]
 

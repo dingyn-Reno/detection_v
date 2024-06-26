@@ -14,10 +14,11 @@ from ape.modeling.ape_deta import (
     DeformableDetrTransformerEncoderVL,
     DeformableDetrTransformerVL,
     DeformableDETRSegmVV,
+    DeformableDETRSegmmultiVV,
 )
 from ape.modeling.text import EVA02CLIP
 
-from ..common.backbone.vitl_eva02_clip import backbone 
+from ..common.backbone.vitl_eva02_clip import backbone
 
 from ..LVIS_InstanceSegmentation.ape_deta.ape_deta_vitl_eva02_lsj1024_cp_24ep import (
     model,
@@ -154,7 +155,7 @@ dataloader.evaluators = [
 model.model_vision.backbone = backbone
 
 train.init_checkpoint = (
-    "output/configs/data_sample/ape_v_train/model_0094999.pth"
+    "models/model_final.pth"
 )
 # train.init_checkpoint = (
 #     "/home/dongbingcheng/detection_v/output/configs/data_sample/ape_v_train/model_0134999.pth"
@@ -207,7 +208,7 @@ model.model_vision.embed_dim = 256
 model.model_vision.backbone.out_channels = 256
 
 model.model_vision.update(
-    _target_=DeformableDETRSegmVV,
+    _target_=DeformableDETRSegmmultiVV, # Todo
 )
 model.model_vision.transformer.update(
     _target_=DeformableDetrTransformerVL,
@@ -265,7 +266,7 @@ model.model_vision.semantic_on = False
 model.model_vision.panoptic_on = False
 
 train.max_iter = 200000
-train.eval_period = 200000 # full=500,few=300
+train.eval_period = 10 # full=500,few=300
 
 lr_multiplier = L(WarmupParamScheduler)(
     scheduler=L(MultiStepParamScheduler)(

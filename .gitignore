@@ -52,3 +52,4 @@ _darcs
 /models
 /snippet
 configs/.DS_Store
+wandb_output
