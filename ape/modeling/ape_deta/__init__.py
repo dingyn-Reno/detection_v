@@ -6,6 +6,7 @@ from .deformable_detr_segm import DeformableDETRSegm
 from .deformable_detr_segm_vl import DeformableDETRSegmVL
 from .deformable_detr_segm_vv import DeformableDETRSegmVV
 from .deformable_detr_segm_multi_vv import DeformableDETRSegmmultiVV
+from .deformable_detr_multi_vv_fer import deformabledetrmultivvfer
 from .deformable_transformer import (
     DeformableDetrTransformer,
     DeformableDetrTransformerDecoder,

@@ -9,12 +9,10 @@ from fvcore.common.param_scheduler import MultiStepParamScheduler
 from ape.data.detection_utils import get_fed_loss_cls_weights
 from ape.layers import VisionLanguageFusion
 from ape.modeling.ape_deta import (
-    DeformableDETRSegmVL,
     DeformableDetrTransformerDecoderVL,
     DeformableDetrTransformerEncoderVL,
     DeformableDetrTransformerVL,
-    DeformableDETRSegmVV,
-    DeformableDETRSegmmultiVV,
+    deformabledetrmultivvfer,
 )
 from ape.modeling.text import EVA02CLIP
 
@@ -53,9 +51,7 @@ from ape.evaluation.oideval import OIDEvaluator
 from detectron2.data.datasets import register_coco_instances
 
 dataloader = OmegaConf.create()
-
 image_size = 1024
-
 dataloader.train = [
     L(build_detection_train_loader_multi_dataset_copypaste)(
         dataset=L(get_detection_dataset_dicts_multi_dataset_copypaste)(
@@ -127,8 +123,6 @@ dataloader.train = [
 ]
 
 
-
-
 dataloader.tests = [
     L(build_detection_test_loader)(
         dataset=L(get_detection_dataset_dicts)(names="coco_2017_val", filter_empty=False),
@@ -150,12 +144,27 @@ dataloader.evaluators = [
     ),
 ]
 
+for i in range(len(dataloader.train)):
+    dataloader.train[i].mapper.max_num_phrase = 128
+    dataloader.train[i].mapper.nms_thresh_phrase = 0.6
+    dataloader.train[i].total_batch_size = 2
+    dataloader.train[i].total_batch_size_list = [2]
+    dataloader.train[i].num_workers = 2
 
+model.model_vision.dataset_prompts = [
+    "name",
+]
+model.model_vision.dataset_names = [
+    "coco_2017_val",
+]
+model.model_vision.dataset_metas = [xx for x in dataloader.train for xx in x.dataset.names]
+
+image_size = 1024
 
 model.model_vision.backbone = backbone
 
 train.init_checkpoint = (
-    "models/model_final.pth"
+    "output/configs/data_sample/ape_multi_v_train_coco_6w_FIFO/model_final.pth"
 )
 
 model.model_language = L(EVA02CLIP)(
@@ -200,7 +209,7 @@ model.model_vision.embed_dim = 256
 model.model_vision.backbone.out_channels = 256
 
 model.model_vision.update(
-    _target_=DeformableDETRSegmmultiVV, 
+    _target_=deformabledetrmultivvfer, 
 )
 model.model_vision.transformer.update(
     _target_=DeformableDetrTransformerVL,
@@ -271,24 +280,12 @@ lr_multiplier = L(WarmupParamScheduler)(
     warmup_factor=0.001,
 )
 
-for i in range(len(dataloader.train)):
-    dataloader.train[i].mapper.max_num_phrase = 128
-    dataloader.train[i].mapper.nms_thresh_phrase = 0.6
-    dataloader.train[i].total_batch_size = 2
-    dataloader.train[i].total_batch_size_list = [2]
-    dataloader.train[i].num_workers = 2
+
 
 train.iter_size = 4
 train.iter_loop = False
 train.dataset_ratio = [1]
 
-model.model_vision.dataset_prompts = [
-    "name",
-]
-model.model_vision.dataset_names = [
-    "coco_2017_val",
-]
-model.model_vision.dataset_metas = [xx for x in dataloader.train for xx in x.dataset.names]
 
 train.output_dir = "output/" + __file__[:-3]
 model.model_vision.vis_period = 5120
@@ -303,5 +300,5 @@ train.amp.enabled = True
 train.ddp.fp16_compression = True
 
 # model.model_vision.prompts_path='/home/vis/dingyuning03/baidu/personal-code/dingyuning_APE/APE/output_imgs'
-# model.model_vision.mode='infer'
+model.model_vision.mode='infer'
 # model.model_vision.cls_nums=58

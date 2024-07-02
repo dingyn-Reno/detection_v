@@ -40,7 +40,7 @@ import re
 # 保存图像
 
 
-class DeformableDETRSegmmultiVV(DeformableDETR):
+class deformabledetrmultivvfer(DeformableDETR):
     def __init__(self, 
         instance_on: bool = True,
         semantic_on: bool = False,
@@ -72,6 +72,8 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
         prompts_num=5,
     **kwargs):
         super().__init__(**kwargs)
+        if mode == 'infer':
+            self.training = False
         self.instance_on = instance_on
         self.semantic_on = semantic_on
         self.panoptic_on = panoptic_on
@@ -154,10 +156,8 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
         for k,v in self.named_parameters():
             print('{}: {}'.format(k, v.requires_grad))
 
-        self.is_cls = True if self.mode == 'train' else False
-        if self.is_cls:
-            self.cls_labels = torch.zeros(1, self.cls_nums, requires_grad=False).to(self.device)
-            self.fea_down = nn.Linear(65536, 1024)
+        self.is_cls = False if self.mode == 'train' else False
+        self.output_dir = 'infer'
 
     def redefine_preprocess(self,input_tensor):
 
@@ -262,27 +262,24 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
         torch.cuda.empty_cache()
     
     
-    def forward(self,batched_inputs, do_postprocess=True,support_dict=None):
-        if self.training:
-            if "dataset_id" in batched_inputs[0]:
-                dataset_ids = [x["dataset_id"] for x in batched_inputs]
-                assert len(set(dataset_ids)) == 1, dataset_ids
-                dataset_id = dataset_ids[0]
-            else:
-                dataset_id = 0
-        else:
-            dataset_id = self.eval_dataset_id
-
+    def forward(self,batched_inputs, prompt=None,do_postprocess=True,support_dict=None, pickle_path='vision_prompts.pkl'):
+        # 目前想的就是prompt为列表里套列表 二层列表为同一种类 一层列表为不同种类
         assert len(batched_inputs)==1
-        if self.mode == 'infer' and self.update_vision_prompts_flags:
-            self.update_vision_prompts(batched_inputs)
-            self.update_vision_prompts_flags=0
-            print("visual pormpt loaded")
-        else:
-            # pdb.set_trace()
-            self.update_vision_prompts(batched_inputs)
-            with open('vision_prompts.pkl', 'wb') as f:
-                pickle.dump(self.vision_prompts.cpu().detach().numpy(), f)
+        if self.mode == 'infer' and pickle_path is not None and self.update_vision_prompts_flags:
+            with open(pickle_path, 'rb') as f:
+                self.vision_prompts = torch.from_numpy(pickle.load(f)).to(self.device)
+            self.update_vision_prompts_flags = 0
+        if pickle_path is None:
+            self.vision_prompts = nn.Parameter(torch.zeros((self.cls_nums, len(prompt), 512)), requires_grad=False).to(self.device)
+            self.prompts_backbone.eval()
+            for index, img in enumerate(prompt):
+                img  = cv2.imread(batched_inputs[0])
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                img = torch.from_numpy(img).permute(2, 0, 1).float()
+                roi = self.preprocess(img).to(self.device).unsqueeze(0)
+                roi_features = self.prompts_backbone.encode_image(roi)
+                self.vision_prompts[index] = self.get_feature_similarity(self.vision_prompts[index], roi_features[0])
+            
         
         vision_prompts=self.vision_prompts.mean(dim=1).unsqueeze(0)# cls* num * 512 -> 1* cls * 512
         vision_prompts=self.prompt_liner(vision_prompts) #1,cls,1024
@@ -301,14 +298,6 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
         # pdb.set_trace()
         features = self.backbone(images.tensor)  # output feature dict
         
-        if self.is_cls:
-            fea_classification = features['p6'].reshape(1, -1)  # 最后一个特征图为1*256*16*16->1*65536
-            fea_classification = self.fea_down(fea_classification)
-            attention = (fea_classification @ vision_prompts.squeeze(0).T)/math.sqrt(fea_classification.shape[-1]) # 1*cls
-            output = F.sigmoid(attention)  # 归一化到0-1
-            cls_loss = F.mse_loss(output, self.cls_labels)
-
-
         if self.neck is not None:
             multi_level_feats = self.neck({f: features[f] for f in self.neck.in_features})
         else:
@@ -421,193 +410,84 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
                 "image_tensor_size": images.tensor.size()[2:],
             }
 
-        if (
-            self.vis_period > 0
-            and self.training
-            and get_event_storage().iter % self.vis_period == self.vis_period - 1
+        
+
+
+        box_cls = output["pred_logits"]
+        box_pred = output["pred_boxes"]
+        mask_pred = output["pred_masks"]
+
+        start_time = time.perf_counter()
+
+        iter_func = retry_if_cuda_oom(F.interpolate)
+        mask_pred = iter_func(
+            mask_pred, size=images.tensor.size()[2:], mode="bilinear", align_corners=False
+        )
+
+        merged_results = [{} for _ in range(box_cls.size(0))]
+        if self.instance_on and not (
+            self.eval_dataset_entity and "thing" not in self.eval_dataset_entity
         ):
-            self.visualize_training(batched_inputs, output, images, dataset_id)
-            self.visualize_training_enc_output(batched_inputs, output, images, dataset_id)
+            dataset_id = 0
+            if dataset_id >= 0 and dataset_id < len(self.metadata_list):
+                if is_thing_stuff_overlap(self.metadata_list[dataset_id]):
+                    thing_id = self.metadata_list[
+                        dataset_id
+                    ].thing_dataset_id_to_contiguous_id.values()
+                    thing_id = torch.Tensor(list(thing_id)).to(torch.long).to(self.device)
 
-        if self.training:
-            gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
-            targets = self.prepare_targets(gt_instances)
+                    detector_box_cls = torch.zeros_like(box_cls)
+                    detector_box_cls += float("-inf")
+                    detector_box_cls[..., thing_id] = box_cls[..., thing_id]
+                else:
+                    num_thing_classes = len(self.metadata_list[dataset_id].thing_classes)
+                    detector_box_cls = box_cls[..., :num_thing_classes]
+            else:
+                detector_box_cls = box_cls
 
-            loss_dict = self.criterion[dataset_id](output, targets)
-
-            weight_dict = self.criterion[dataset_id].weight_dict
-            for k in loss_dict.keys():
-                if k in weight_dict:
-                    loss_dict[k] *= weight_dict[k]
-            if self.is_cls:
-                loss_dict['cls_loss'] = cls_loss
-            return loss_dict
-        else:
-
-            box_cls = output["pred_logits"]
-            box_pred = output["pred_boxes"]
-            mask_pred = output["pred_masks"]
-
-            start_time = time.perf_counter()
-
-            iter_func = retry_if_cuda_oom(F.interpolate)
-            mask_pred = iter_func(
-                mask_pred, size=images.tensor.size()[2:], mode="bilinear", align_corners=False
+            use_sigmoid = True
+            detector_results, filter_inds = self.inference(
+                detector_box_cls, box_pred, images.image_sizes, use_sigmoid=use_sigmoid
             )
 
-            merged_results = [{} for _ in range(box_cls.size(0))]
-            if self.instance_on and not (
-                self.eval_dataset_entity and "thing" not in self.eval_dataset_entity
-            ):
-                if dataset_id >= 0 and dataset_id < len(self.metadata_list):
-                    if is_thing_stuff_overlap(self.metadata_list[dataset_id]):
-                        thing_id = self.metadata_list[
-                            dataset_id
-                        ].thing_dataset_id_to_contiguous_id.values()
-                        thing_id = torch.Tensor(list(thing_id)).to(torch.long).to(self.device)
+            if self.test_mask_on:
+                detector_mask_preds = [
+                    x[filter_ind.cpu()] for x, filter_ind in zip(mask_pred, filter_inds)
+                ]
 
-                        detector_box_cls = torch.zeros_like(box_cls)
-                        detector_box_cls += float("-inf")
-                        detector_box_cls[..., thing_id] = box_cls[..., thing_id]
-                    else:
-                        num_thing_classes = len(self.metadata_list[dataset_id].thing_classes)
-                        detector_box_cls = box_cls[..., :num_thing_classes]
-                else:
-                    detector_box_cls = box_cls
-
-                use_sigmoid = True
-                detector_results, filter_inds = self.inference(
-                    detector_box_cls, box_pred, images.image_sizes, use_sigmoid=use_sigmoid
-                )
-
-                if self.test_mask_on:
-                    detector_mask_preds = [
-                        x[filter_ind.cpu()] for x, filter_ind in zip(mask_pred, filter_inds)
-                    ]
-
-                    for result, box_mask in zip(detector_results, detector_mask_preds):
-                        box_mask = box_mask.sigmoid() > 0.5
-                        box_mask = BitMasks(box_mask).crop_and_resize(
-                            result.pred_boxes.tensor.to(box_mask.device), 128
-                        )
-                        result.pred_masks = (
-                            box_mask.to(result.pred_boxes.tensor.device)
-                            .unsqueeze(1)
-                            .to(dtype=torch.float32)
-                        )
-
-                if do_postprocess:
-                    assert (
-                        not torch.jit.is_scripting()
-                    ), "Scripting is not supported for postprocess."
-                    detector_results = DeformableDETRSegmmultiVV._postprocess_instance(
-                        detector_results, batched_inputs, images.image_sizes
+                for result, box_mask in zip(detector_results, detector_mask_preds):
+                    box_mask = box_mask.sigmoid() > 0.5
+                    box_mask = BitMasks(box_mask).crop_and_resize(
+                        result.pred_boxes.tensor.to(box_mask.device), 128
                     )
-                    for merged_result, detector_result in zip(merged_results, detector_results):
-                        merged_result.update(detector_result)
-
-            else:
-                detector_results = None
-
-            if self.semantic_on and not (
-                self.eval_dataset_entity and "stuff" not in self.eval_dataset_entity
-            ):
-
-                semantic_mask_pred = mask_pred.clone()
-                semantic_box_cls = get_stuff_score(
-                    box_cls, self.metadata_list[dataset_id], self.dataset_entities[dataset_id]
-                )
-
-                if self.semantic_post_nms:
-                    _, filter_inds = self.inference(semantic_box_cls, box_pred, images.image_sizes)
-                    semantic_box_cls = torch.stack(
-                        [x[filter_ind] for x, filter_ind in zip(semantic_box_cls, filter_inds)],
-                        dim=0,
+                    result.pred_masks = (
+                        box_mask.to(result.pred_boxes.tensor.device)
+                        .unsqueeze(1)
+                        .to(dtype=torch.float32)
                     )
-                    semantic_mask_pred = torch.stack(
-                        [x[filter_ind] for x, filter_ind in zip(semantic_mask_pred, filter_inds)],
-                        dim=0,
-                    )
-
-                if do_postprocess:
-                    assert (
-                        not torch.jit.is_scripting()
-                    ), "Scripting is not supported for postprocess."
-                    semantic_results = DeformableDETRSegmmultiVV._postprocess_semantic(
-                        semantic_box_cls, semantic_mask_pred, batched_inputs, images
-                    )
-                    if (
-                        dataset_id >= 0
-                        and self.dataset_entities[dataset_id] == "stuff"
-                        and self.metadata_list[dataset_id].get("stuff_classes")[0] == "things"
-                        and self.stuff_prob_thing > 0
-                    ):
-                        for semantic_result in semantic_results:
-                            semantic_result["sem_seg"][0, ...] = math.log(
-                                self.stuff_prob_thing / (1 - self.stuff_prob_thing)
-                            )
-                    for merged_result, semantic_result in zip(merged_results, semantic_results):
-                        merged_result.update(semantic_result)
-
-            else:
-                semantic_results = None
-
-            if self.panoptic_on and not (
-                self.eval_dataset_entity and "thing+stuff" not in self.eval_dataset_entity
-            ):
-                assert dataset_id >= 0 and dataset_id < len(self.metadata_list)
-                if do_postprocess:
-                    assert (
-                        not torch.jit.is_scripting()
-                    ), "Scripting is not supported for postprocess."
-                    if True:
-                        if self.panoptic_post_nms:
-                            _, filter_inds = self.inference(box_cls, box_pred, images.image_sizes)
-                            panoptic_mask_pred = [
-                                x[filter_ind] for x, filter_ind in zip(mask_pred, filter_inds)
-                            ]
-                            panoptic_box_cls = [
-                                x[filter_ind] for x, filter_ind in zip(box_cls, filter_inds)
-                            ]
-
-                        panoptic_results = DeformableDETRSegmmultiVV._postprocess_panoptic(
-                            panoptic_box_cls,
-                            panoptic_mask_pred,
-                            batched_inputs,
-                            images,
-                            self.metadata_list[dataset_id],
-                            self.panoptic_configs,
-                        )
-                    else:
-                        panoptic_results = []
-                        self.combine_overlap_thresh = 0.5
-                        self.combine_stuff_area_thresh = 4096
-                        self.combine_instances_score_thresh = 0.5
-                        for detector_result, semantic_result in zip(
-                            detector_results, semantic_results
-                        ):
-                            detector_r = detector_result["instances"]
-                            sem_seg_r = semantic_result["sem_seg"]
-                            panoptic_r = combine_semantic_and_instance_outputs(
-                                detector_r,
-                                sem_seg_r.argmax(dim=0),
-                                self.combine_overlap_thresh,
-                                self.combine_stuff_area_thresh,
-                                self.combine_instances_score_thresh,
-                            )
-                            panoptic_results.append({"panoptic_seg": panoptic_r})
-                    for merged_result, panoptic_result in zip(merged_results, panoptic_results):
-                        merged_result.update(panoptic_result)
-
-            else:
-                panoptic_results = None
-
-            self.postprocess_time = time.perf_counter() - start_time
 
             if do_postprocess:
-                return merged_results
+                assert (
+                    not torch.jit.is_scripting()
+                ), "Scripting is not supported for postprocess."
+                detector_results = deformabledetrmultivvfer._postprocess_instance(
+                    detector_results, batched_inputs, images.image_sizes
+                )
+                for merged_result, detector_result in zip(merged_results, detector_results):
+                    merged_result.update(detector_result)
 
-            return detector_results, semantic_results, panoptic_results
+        else:
+            detector_results = None
+
+        
+
+        self.postprocess_time = time.perf_counter() - start_time
+
+        self.visualize_training(batched_inputs, output, images, dataset_id)
+        self.visualize_training_enc_output(batched_inputs, output, images, dataset_id)
+        if do_postprocess:
+            return merged_results
+        return detector_results
 
     def maskdino_mask_features(self, encode_feats, multi_level_feats, multi_level_masks):
         start_idx = sum(
@@ -730,7 +610,10 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
         return new_targets
 
     def preprocess_image(self, batched_inputs):
-        images = [self._move_to_current_device(x["image"]) for x in batched_inputs]
+        image  = cv2.imread(batched_inputs[0])
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image = torch.from_numpy(image).permute(2, 0, 1).float()
+        images = [self._move_to_current_device(image)]
         images = [x.to(self.pixel_mean.dtype) for x in images]
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         images = ImageList.from_tensors(
@@ -751,8 +634,8 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
         for results_per_image, input_per_image, image_size in zip(
             instances, batched_inputs, image_sizes
         ):
-            height = input_per_image.get("height", image_size[0])
-            width = input_per_image.get("width", image_size[1])
+            height = image_size[0]
+            width = image_size[1]
             r = detector_postprocess(results_per_image, height, width)
             processed_results.append({"instances": r.to("cpu")})
         return processed_results
@@ -783,21 +666,6 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
                 mask_cls = mask_cls.cpu()
                 mask_pred = mask_pred.cpu()
             result = torch.einsum("qc,qhw->chw", mask_cls, mask_pred)
-
-            if True and False:
-                num_thing_classes = len(
-                    metadata.get(
-                        "thing_classes",
-                        [
-                            "things",
-                        ],
-                    )
-                )
-
-                result_0 = result[:num_thing_classes, ...]
-                result_1 = result[num_thing_classes:, ...]
-                result_0 = result_0.mean(dim=0, keepdim=True)
-                result = torch.cat([result_0, result_1], dim=0)
 
             r = sem_seg_postprocess(result, image_size, height, width)
             processed_results.append({"sem_seg": r})
@@ -970,8 +838,8 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
             if "expressions" in batched_inputs[0] and not self.expression_cumulative_gt_class:
                 class_names = [xx for xx in input["expressions"]] + ["unknown"] * 1000
 
-            img = input["image"]
-            img = convert_image_to_rgb(img.permute(1, 2, 0), self.input_format)
+            img = torch.from_numpy(cv2.imread(input))
+            img = convert_image_to_rgb(img, self.input_format)
             v_gt = Visualizer(img, None)
 
             if "instances" in input:
@@ -1007,7 +875,8 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
             )
             pred_img = v_pred.get_image()
 
-            vis_img = np.concatenate((anno_img, pred_img), axis=1)
+            vis_img = pred_img
+            # vis_img = np.concatenate((anno_img, pred_img), axis=1)
 
             if result.has("pred_texts"):
                 labels = [
@@ -1022,18 +891,18 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
                 pred_img = v_pred.get_image()
                 vis_img = np.concatenate((vis_img, pred_img), axis=1)
 
-            basename = os.path.basename(input["file_name"])
+            basename = os.path.basename(input)
             if self.training:
                 cv2.imwrite(
                     os.path.join(
                         self.output_dir, "training", str(storage.iter) + suffix + "_" + basename
                     ),
-                    vis_img[:, :, ::-1],
+                    vis_img,
                 )
             else:
                 cv2.imwrite(
                     os.path.join(self.output_dir, "inference", suffix + basename),
-                    vis_img[:, :, ::-1],
+                    vis_img,
                 )
 
     @torch.no_grad()
@@ -1054,8 +923,8 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
         from detectron2.utils.visualizer import Visualizer
 
         for input, result in zip(batched_inputs, results):
-            img = input["image"]
-            img = convert_image_to_rgb(img.permute(1, 2, 0), self.input_format)
+            img = torch.from_numpy(cv2.imread(input))
+            img = convert_image_to_rgb(img, self.input_format)
             v_gt = Visualizer(img, None)
             if "instances" in input:
                 v_gt = v_gt.overlay_instances(
@@ -1076,9 +945,9 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
             )
             pred_img = v_pred.get_image()
 
-            vis_img = np.concatenate((anno_img, pred_img), axis=1)
+            vis_img = pred_img
 
-            basename = os.path.basename(input["file_name"])
+            basename = os.path.basename(input)
             if self.training:
                 cv2.imwrite(
                     os.path.join(
@@ -1086,12 +955,12 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
                         "training",
                         str(storage.iter) + suffix + "_enc_output_" + basename,
                     ),
-                    vis_img[:, :, ::-1],
+                    vis_img,
                 )
             else:
                 cv2.imwrite(
                     os.path.join(self.output_dir, "inference", suffix + "enc_output_" + basename),
-                    vis_img[:, :, ::-1],
+                    vis_img,
                 )
 
     def set_model_language(self, model_language):
