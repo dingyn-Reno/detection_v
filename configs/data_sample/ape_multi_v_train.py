@@ -155,7 +155,7 @@ dataloader.evaluators = [
 model.model_vision.backbone = backbone
 
 train.init_checkpoint = (
-    "models/model_final.pth"
+    "models/model_obj_0299999.pth"
 )
 
 model.model_language = L(EVA02CLIP)(
