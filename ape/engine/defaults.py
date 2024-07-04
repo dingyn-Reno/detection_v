@@ -67,7 +67,7 @@ class DefaultPredictor:
             self.input_format = cfg.model.input_format
         assert self.input_format in ["RGB", "BGR"], self.input_format
 
-    def __call__(self, original_image, text_prompt=None, mask_prompt=None):
+    def __call__(self, original_image, text_prompt=None, mask_prompt=None,vision_prompt=None):
         """
         Args:
             original_image (np.ndarray): an image of shape (H, W, C) (in BGR order).
@@ -90,6 +90,8 @@ class DefaultPredictor:
             if text_prompt is not None:
                 inputs["prompt"] = "text"
                 inputs["text_prompt"] = text_prompt
+            if vision_prompt is not None:
+                inputs["vision_prompt"]=vision_prompt
             if mask_prompt is not None:
                 mask_prompt = self.aug.get_transform(mask_prompt).apply_image(mask_prompt)
                 inputs["mask_prompt"] = torch.as_tensor(mask_prompt.astype("float32"))

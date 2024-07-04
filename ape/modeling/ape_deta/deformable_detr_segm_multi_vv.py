@@ -217,7 +217,17 @@ class DeformableDETRSegmmultiVV(DeformableDETR):
                 self.vision_prompts[0,category]=roi_features[0]
             return
         # pdb.set_trace()
-        if self.mode=='infer':
+        if self.mode=='end2end':
+            name_list=batched_inputs[0]['vision_prompt']
+            for name in name_list:
+                image = Image.open(name).convert("RGB")
+                image = np.array(image)[:, :, ::-1].copy()
+                data = torch.from_numpy(image)
+                self.prompts_backbone.eval()
+                roi = self.preprocess(data).to(device).unsqueeze(0)
+                roi_features = self.prompts_backbone.encode_image(roi)
+                self.vision_prompts[0] = self.get_feature_similarity(self.vision_prompts[0], roi_features[0])
+            # pdb.set_trace()
             return
         if 'instances' not in batched_inputs[0].keys():
             return

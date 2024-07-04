@@ -16,7 +16,7 @@ from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrain
 from .transform import image_transform
 from .tokenizer import HFTokenizer, tokenize
 from .utils import resize_clip_pos_embed, resize_evaclip_pos_embed, resize_visual_pos_embed, resize_eva_pos_embed
-
+import pdb
 
 _MODEL_CONFIG_PATHS = [Path(__file__).parent / f"model_configs/"]
 _MODEL_CONFIGS = {}  # directory (model_name: config) of model architecture configs
@@ -64,6 +64,7 @@ def add_model_config(path):
 
 
 def get_model_config(model_name):
+    print('model_config:',_MODEL_CONFIGS)
     if model_name in _MODEL_CONFIGS:
         return deepcopy(_MODEL_CONFIGS[model_name])
     else:
@@ -240,6 +241,7 @@ def create_model(
         )
     else:
         model_cfg = get_model_config(model_name)
+
         if model_cfg is not None:
             logging.info(f'Loaded {model_name} model config.')
         else:

@@ -175,7 +175,7 @@ class VisualizationDemo(object):
             num_gpu = torch.cuda.device_count()
             self.predictor = AsyncPredictor(cfg, num_gpus=num_gpu)
         else:
-            self.predictor = DefaultPredictor(cfg,model=self.model)
+            self.predictor = DefaultPredictor(cfg)
         print(args)
 
     def run_on_image(
@@ -186,7 +186,7 @@ class VisualizationDemo(object):
         with_box=True,
         with_mask=True,
         with_sseg=True,
-        support_dict=None
+        vision_prompt=None
     ):
         """
         Args:
@@ -207,7 +207,7 @@ class VisualizationDemo(object):
             metadata = self.metadata
         # pdb.set_trace()
         vis_output = None
-        predictions = self.predictor(image, text_prompt, mask_prompt, support_dict)
+        predictions = self.predictor(image, text_prompt, mask_prompt, vision_prompt)
 
         if "instances" in predictions:
             predictions["instances"] = filter_instances(

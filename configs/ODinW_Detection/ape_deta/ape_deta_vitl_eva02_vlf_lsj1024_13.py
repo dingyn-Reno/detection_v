@@ -58,7 +58,7 @@ for i in range(len(dataloader.train)):
     dataloader.train[i].total_batch_size = 16
     dataloader.train[i].total_batch_size_list = [16]
 
-model.model_vision.dataset_prompts = ["name" for _ in dataloader.train]
+mode:l.model_vision.dataset_prompts = ["name" for _ in dataloader.train]
 model.model_vision.dataset_names = [
     x.dataset.names[0].replace("_train", "") for x in dataloader.train
 ]

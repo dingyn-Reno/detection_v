@@ -33,13 +33,11 @@ import torch
 # constants
 WINDOW_NAME = "APE"
 import pdb
-from NAME_TO_TASK import NAME_TO_TASK
+import jsonify
 
 pylab.rcParams['figure.figsize'] = 20, 12
 
-name_to_task=NAME_TO_TASK()
-get_task=name_to_task.get_task
-get_name_index=name_to_task.get_name_index
+
 
 def load(url, if_remote=False):
     """
@@ -149,14 +147,15 @@ def get_parser():
     return parser
 
 def updates(args):
-    args.config_file='/home/vis/dingyuning03/baidu/personal-code/dingyuning_APE/APE/configs/city/city_13/city_58_fullshot.py'
-    args.input=['/home/vis/dingyuning03/baidu/personal-code/dingyuning_APE/APE/datasets/13cls_weizhang_det/chengguan_20240129_add7cls/weihuapinche_data/11010829001320029232022022051010180449114_01.Jpeg']
+    args.config_file='./configs/data_sample/ape_multi_v_infer_end_to_end.py'
+    args.input=['./datasets/13cls_weizhang_det/chengguan_20240129_add7cls/weihuapinche_data/11010829001320029232022022051010180449114_01.Jpeg']
     args.output='output/dir'
     args.confidence_threshold=0.0
     args.text_prompt='snow or ice on the road'
+    args.vision_prompt=[]
     return args
 
-def infer(img,text_prompt,support_dict=None):
+def infer(img,text_prompt,vision_prompt):
     args.input=img
     args.text_prompt=text_prompt
     if args.input:
@@ -180,7 +179,7 @@ def infer(img,text_prompt,support_dict=None):
                 with_box=True,
                 with_mask=False,
                 with_sseg=False,
-                support_dict=support_dict
+                vision_prompt=vision_prompt
             )
             # pdb.set_trace()
             logger.info(
@@ -225,7 +224,7 @@ logger.info("Arguments: " + str(args))
 print(args)
 args = updates(args)
 cfg = setup_cfg(args)
-cfg.train.init_checkpoint='/home/vis/dingyuning03/baidu/personal-code/dingyuning_APE/APE/models/cls58.pth'
+cfg.train.init_checkpoint='/share/dingyuning1/model_final.pth'
 cfg.model.model_language.cache_dir=""
 cfg.model.model_vision.select_box_nums_for_evaluation=500
 cfg.model.model_vision.text_feature_bank_reset=True
@@ -242,9 +241,10 @@ def poster(img_path=None,save_img='output.png'):
         # pdb.set_trace()
         data={}
         support_dict_list=[]
-        data['prompts']="takeway truck"
+        data['prompts']=""
         data["optimize_status"]=0
-        data["task_name"]="takeway truck"
+        data["task_name"]=""
+        data["vision_prompt"]=["./1.png","./1.png","./1.png"]
         if data["optimize_status"]==1:
             import pickle
             task_names=data["task_name"].split(",")
@@ -258,52 +258,49 @@ def poster(img_path=None,save_img='output.png'):
         else:
             support_dict=None
 
-        try:
-            # fn = str(time.time())
-            # img_path="/home/vis/dingyuning03/baidu/personal-code/dingyuning_APE/APE/datasets/13cls_weizhang_det/chengguan_20240129_add7cls/weihuapinche_data/11010829001320029232022022051010180449114_01.Jpeg"
-            # cv2.imwrite(img_path, base64_to_image(data["base64"]))
-            img = [img_path]
-            caption = data["prompts"] 
-            print(img,caption)
-            results = infer(img, caption,support_dict)
-            # print(results)
-            scores = []
-            labels = []
-            bboxes = []
-            for result in results:
-                scores.append(result["score"])
-                labels.append(result["category_name"])
-                bboxes.append(result["bbox"])
-            lens = len(scores)
-            outr = {"results":[]}
-            for idx in range(lens):
-                _outr = {}
-                _outr["scores"] = scores[idx]
-                _outr["labels"] = labels[idx]
-                _outr["type"]= get_name_index(labels[idx])
-                boxes=bboxes[idx]
-                print(scores[idx])
-                X, Y, XZ, YZ = boxes[0], boxes[1],  boxes[0]+boxes[2],  boxes[1]+boxes[3]
-                bboxes[idx] = [X, Y, XZ, YZ]
-                _outr["boxes"] = bboxes[idx] 
-                outr["results"].append(_outr)
-            # os.remove(img_path)
-            img = cv2.imread(img_path)
-            r=outr
-            if len(r["results"]) > 0:
-                for i in range(len(r["results"])):
-                    boxes = r["results"][i]["boxes"]
-                    score = r["results"][i]["scores"]
-                    # if score < 0.4:continue
-                    X, Y, XZ, YZ = boxes[0], boxes[1],boxes[0]+boxes[2], boxes[1]+boxes[3]
-                    img = cv2.rectangle(img, (int(X), int(Y)), \
-                            (int(XZ), int(YZ)), \
-                            [255,0,0], 2)
-                    # img=cv2.putText(img, str(r["results"][i]["scores"]), (int(X), int(Y)), cv2.FONT_HERSHEY_COMPLEX, 1.0, (100, 200, 200), 1)
-            cv2.imwrite(save_img,img)
-        
-        except:
-            return jsonify({"error": "system error"})
+        # fn = str(time.time())
+        # img_path="/home/vis/dingyuning03/baidu/personal-code/dingyuning_APE/APE/datasets/13cls_weizhang_det/chengguan_20240129_add7cls/weihuapinche_data/11010829001320029232022022051010180449114_01.Jpeg"
+        # cv2.imwrite(img_path, base64_to_image(data["base64"]))
+        img = [img_path]
+        caption = data["prompts"]
+        vision_prompt = data["vision_prompt"]
+        print(img, caption)
+        results = infer(img, caption, vision_prompt)
+        # print(results)
+        scores = []
+        labels = []
+        bboxes = []
+        for result in results:
+            scores.append(result["score"])
+            labels.append(result["category_name"])
+            bboxes.append(result["bbox"])
+        lens = len(scores)
+        outr = {"results": []}
+        for idx in range(lens):
+            _outr = {}
+            _outr["scores"] = scores[idx]
+            _outr["labels"] = labels[idx]
+            boxes = bboxes[idx]
+            print(scores[idx])
+            X, Y, XZ, YZ = boxes[0], boxes[1], boxes[0] + boxes[2], boxes[1] + boxes[3]
+            bboxes[idx] = [X, Y, XZ, YZ]
+            _outr["boxes"] = bboxes[idx]
+            outr["results"].append(_outr)
+        # os.remove(img_path)
+        img = cv2.imread(img_path)
+        r = outr
+        if len(r["results"]) > 0:
+            for i in range(len(r["results"])):
+                boxes = r["results"][i]["boxes"]
+                score = r["results"][i]["scores"]
+                # if score < 0.4:continue
+                X, Y, XZ, YZ = boxes[0], boxes[1], boxes[0] + boxes[2], boxes[1] + boxes[3]
+                img = cv2.rectangle(img, (int(X), int(Y)), \
+                                    (int(XZ), int(YZ)), \
+                                    [255, 0, 0], 2)
+                # img=cv2.putText(img, str(r["results"][i]["scores"]), (int(X), int(Y)), cv2.FONT_HERSHEY_COMPLEX, 1.0, (100, 200, 200), 1)
+        cv2.imwrite(save_img, img)
+
     else:
         outr = {"results":"EASYPACK ERROR"}
     response = json.dumps(outr)
@@ -311,16 +308,10 @@ def poster(img_path=None,save_img='output.png'):
     return response
 
 if __name__ == '__main__':
-    pa = "/home/vis/dingyuning03/baidu/personal-code/dingyuning_APE/APE/datasets/13cls_weizhang_det/"
-    first_json = "/home/vis/dingyuning03/baidu/personal-code/dingyuning_APE/APE/datasets/add_6cls_26/chengguan_20240412_58cls_add_xiaoguanggao_train.json"
-    # first_json = "/home/vis/shenzhiyong/code/00_BM/GLIP-OWLv2/MQ-Det/DATASET/chengguan/all_train_data_gb_new_13cls.json"
-    with open(first_json, "r") as f:
-        data = json.load(f)
-    ls= [23689, 23691, 23692, 23693, 23694, 23695, 23696, 23697, 23698, 23698, 23699, 23700, 23701, 23702, 23703, 23704, 23705, 23706, 23706]
-    for img in data['images']:
-        if img['id'] in ls:
-            path=pa+img['file_name']
-            poster(path,'/home/vis/dingyuning03/baidu/personal-code/dingyuning_APE/APE/output_img2/infer_result/16/{}.png'.format(img['id']))
+
+    response=poster('./1.png','./savez.png')
+    pdb.set_trace()
+    print(response)
 
 # [4526, 4527, 4528, 4529, 4530, 4531, 4532, 4533, 4534, 4535]
 # [5666, 5667, 5668, 5669, 5670, 5671, 5672, 6014, 6015, 6016]
