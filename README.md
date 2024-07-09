@@ -2,7 +2,7 @@
 
 ## 介绍
 
-## 多视觉提示模型-VIOSD
+### 多视觉提示模型-VIOSD
 
 Visual Intersection Open Set Detection
 
@@ -19,7 +19,7 @@ Visual Intersection Open Set Detection
 | Odinw-35  |   23.4     |  22.0       |
 ```
 
-## 端到端推理代码
+## 端到端推理
 
 ```python
 python tools/infer.py
