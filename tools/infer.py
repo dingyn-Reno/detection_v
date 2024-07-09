@@ -224,7 +224,7 @@ logger.info("Arguments: " + str(args))
 print(args)
 args = updates(args)
 cfg = setup_cfg(args)
-cfg.train.init_checkpoint='/share/dingyuning1/model_final.pth'
+cfg.train.init_checkpoint='/share/dingyuning1/obj_model_final.pth'
 cfg.model.model_language.cache_dir=""
 cfg.model.model_vision.select_box_nums_for_evaluation=500
 cfg.model.model_vision.text_feature_bank_reset=True
@@ -244,7 +244,9 @@ def poster(img_path=None,save_img='output.png'):
         data['prompts']=""
         data["optimize_status"]=0
         data["task_name"]=""
-        data["vision_prompt"]=["./1.png","./1.png","./1.png"]
+        data["vision_prompt"]=["/home/dingyuning/APE_v/img/prompt/prompt1.png","/home/dingyuning/APE_v/img/prompt/prompt2.png",
+                               "/home/dingyuning/APE_v/img/prompt/prompt3.png","/home/dingyuning/APE_v/img/prompt/prompt4.png",
+                               "/home/dingyuning/APE_v/img/prompt/prompt5.png"]
         if data["optimize_status"]==1:
             import pickle
             task_names=data["task_name"].split(",")
@@ -293,7 +295,7 @@ def poster(img_path=None,save_img='output.png'):
             for i in range(len(r["results"])):
                 boxes = r["results"][i]["boxes"]
                 score = r["results"][i]["scores"]
-                # if score < 0.4:continue
+                if score < 0.1:continue
                 X, Y, XZ, YZ = boxes[0], boxes[1], boxes[0] + boxes[2], boxes[1] + boxes[3]
                 img = cv2.rectangle(img, (int(X), int(Y)), \
                                     (int(XZ), int(YZ)), \
@@ -309,7 +311,7 @@ def poster(img_path=None,save_img='output.png'):
 
 if __name__ == '__main__':
 
-    response=poster('./1.png','./savez.png')
+    response=poster('/home/dingyuning/APE_v/img/target_img.webp','./savez.png')
     pdb.set_trace()
     print(response)
 
