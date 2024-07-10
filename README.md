@@ -10,14 +10,13 @@ Visual Intersection Open Set Detection
 
 仅训练objects365数据集，即可接近主流Open Vocabulary方法效果：
 
-```Odinw-35
-| Dataset      | AP （GLIP） |  AP （Ours） ｜
-| ----------- | ----------- | ----------- |
-| COCO      |   49.8  |       |
-| LVIS  |    26.9    |  29.3       |
-| Obj365  | 36.2    |  37.9     |
-| Odinw-35  |   23.4     |  22.0       |
-```
+
+| Dataset  | AP （GLIP） | AP （Ours） |
+| ---------- | ------------- | ------------- |
+| COCO     | 49.8        | 60.6        |
+| LVIS     | 26.9        | 29.3        |
+| Obj365   | 36.2        | 37.9        |
+| Odinw-35 | 23.4        | 22.0        |
 
 ## 端到端推理
 
